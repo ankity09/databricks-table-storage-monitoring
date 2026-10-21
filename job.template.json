@@ -1,0 +1,48 @@
+{
+  "name": "Daily Table Storage Metrics",
+  "max_concurrent_runs": 1,
+  "timeout_seconds": 21600,
+  "performance_target": "STANDARD",
+  "tags": {
+    "purpose": "table-storage-monitoring"
+  },
+  "schedule": {
+    "quartz_cron_expression": "0 0 2 * * ?",
+    "timezone_id": "UTC",
+    "pause_status": "PAUSED"
+  },
+  "tasks": [
+    {
+      "task_key": "collect_table_storage",
+      "environment_key": "storage_metrics",
+      "notebook_task": {
+        "notebook_path": "/Workspace/Shared/table-storage-monitoring/collector",
+        "source": "WORKSPACE",
+        "base_parameters": {
+          "scope_id": "REPLACE_WITH_UNIQUE_SCOPE_ID",
+          "source_catalog": "REPLACE_WITH_SOURCE_CATALOG",
+          "source_schema": "REPLACE_WITH_SOURCE_SCHEMA",
+          "target_catalog": "REPLACE_WITH_OUTPUT_CATALOG",
+          "target_schema": "REPLACE_WITH_OUTPUT_SCHEMA",
+          "collection_mode": "full_storage",
+          "account_id": "REPLACE_WITH_ACCOUNT_ID",
+          "metastore_id": "REPLACE_WITH_METASTORE_ID",
+          "max_tables": "10000",
+          "batch_size": "100",
+          "explicit_tables_json": "",
+          "exit_on_error": "true"
+        }
+      },
+      "timeout_seconds": 21600,
+      "max_retries": 0
+    }
+  ],
+  "environments": [
+    {
+      "environment_key": "storage_metrics",
+      "spec": {
+        "client": "4"
+      }
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+# Optional local contract tests only. Databricks notebooks provide PySpark.
+pyspark>=4.0,<5.0

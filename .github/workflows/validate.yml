@@ -1,0 +1,25 @@
+name: Validate implementation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Check notebook syntax
+        run: python -m compileall -q collector.py test_harness.py external_reconciliation.py
+      - name: Run offline contract tests
+        run: python -m unittest discover -p 'test_local_*.py' -v

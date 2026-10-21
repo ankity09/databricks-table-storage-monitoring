@@ -1,0 +1,32 @@
+# Local environment, credentials, and account-specific configuration
+.env
+.env.*
+!.env.example
+.databrickscfg
+.databricks/
+*.pem
+*.key
+config.local.*
+job.local.json
+
+# Operational evidence can contain table names, paths and workspace identifiers
+evidence/
+dashboard_validation*.json
+validation*.json
+*.log
+
+# Generated local artifacts; the reviewed portable dashboard is tracked
+dist/
+build/
+table_storage.local.lvdash.json
+*.zip
+
+# Python and editor state
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.idea/
+.vscode/
+.DS_Store

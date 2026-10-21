@@ -1,0 +1,772 @@
+{
+  "datasets": [
+    {
+      "name": "storage_summary",
+      "displayName": "Current storage summary",
+      "queryLines": [
+        "WITH health AS (\n",
+        "  SELECT * FROM storage_collection_scope_health\n",
+        "  WHERE scope_id = 'REPLACE_WITH_UNIQUE_SCOPE_ID' AND collection_mode = 'full_storage'\n",
+        "), observed AS (\n",
+        "  SELECT run_id, COUNT(*) AS recorded_count,\n",
+        "         COUNT_IF(collection_status = 'SUCCESS' AND total_bytes IS NOT NULL) AS measured_count,\n",
+        "         SUM(CASE WHEN collection_status = 'SUCCESS' THEN total_bytes END) AS measured_total_bytes\n",
+        "  FROM table_storage_current\n",
+        "  WHERE scope_id = 'REPLACE_WITH_UNIQUE_SCOPE_ID' AND collection_mode = 'full_storage'\n",
+        "  GROUP BY run_id\n",
+        ")\n",
+        "SELECT requested.scope_id,\n",
+        "       h.current_run_id,\n",
+        "       h.current_run_status,\n",
+        "       h.current_inventory_count AS inventory_count,\n",
+        "       COALESCE(o.measured_count, 0) AS measured_count,\n",
+        "       h.current_error_count AS error_count,\n",
+        "       CASE WHEN h.current_run_status = 'COMPLETE'\n",
+        "                  AND h.current_inventory_count > 0\n",
+        "                  AND h.current_error_count = 0\n",
+        "                  AND h.current_success_count = h.current_inventory_count\n",
+        "                  AND o.recorded_count = h.current_inventory_count\n",
+        "                  AND o.measured_count = h.current_inventory_count\n",
+        "            THEN o.measured_total_bytes END AS complete_total_bytes,\n",
+        "       CASE WHEN h.current_run_status = 'COMPLETE'\n",
+        "                  AND h.current_inventory_count > 0\n",
+        "                  AND h.current_error_count = 0\n",
+        "                  AND h.current_success_count = h.current_inventory_count\n",
+        "                  AND o.recorded_count = h.current_inventory_count\n",
+        "                  AND o.measured_count = h.current_inventory_count\n",
+        "            THEN o.measured_total_bytes / 1073741824.0 END AS complete_total_gib,\n",
+        "       o.measured_total_bytes AS measured_subset_bytes,\n",
+        "       h.current_run_finished_at\n",
+        "FROM (SELECT 'REPLACE_WITH_UNIQUE_SCOPE_ID' AS scope_id) requested\n",
+        "LEFT JOIN health h ON requested.scope_id = h.scope_id\n",
+        "LEFT JOIN observed o ON h.current_run_id = o.run_id"
+      ]
+    },
+    {
+      "name": "storage_health",
+      "displayName": "Collection health and coverage",
+      "queryLines": [
+        "WITH observed AS (\n",
+        "  SELECT run_id, MIN(observed_at) AS oldest_observation_at\n",
+        "  FROM table_storage_current\n",
+        "  WHERE scope_id = 'REPLACE_WITH_UNIQUE_SCOPE_ID' AND collection_mode = 'full_storage'\n",
+        "    AND collection_status = 'SUCCESS'\n",
+        "  GROUP BY run_id\n",
+        ")\n",
+        "SELECT requested.scope_id,\n",
+        "       CASE WHEN h.run_id IS NULL THEN 'NO_COLLECTION'\n",
+        "            WHEN h.run_status = 'RUNNING' THEN 'RUNNING'\n",
+        "            WHEN h.current_run_status = 'FAILED' THEN 'FAILED'\n",
+        "            WHEN h.current_inventory_count = 0 THEN 'EMPTY_INVENTORY'\n",
+        "            WHEN h.current_run_status = 'PARTIAL' THEN 'PARTIAL'\n",
+        "            ELSE h.current_run_status END AS collection_state,\n",
+        "       h.run_id AS latest_attempt_id,\n",
+        "       h.run_status AS latest_attempt_status,\n",
+        "       h.run_started_at AS latest_attempt_started_at,\n",
+        "       h.current_run_id,\n",
+        "       h.current_run_status,\n",
+        "       h.current_run_finished_at,\n",
+        "       h.current_inventory_count AS inventory_count,\n",
+        "       h.current_success_count AS success_count,\n",
+        "       h.current_error_count AS error_count,\n",
+        "       CASE WHEN h.current_inventory_count > 0\n",
+        "            THEN h.current_success_count * 1.0 / h.current_inventory_count END AS measured_fraction,\n",
+        "       CASE WHEN h.current_run_status IN ('COMPLETE', 'PARTIAL')\n",
+        "            THEN TIMESTAMPDIFF(SECOND, o.oldest_observation_at, CURRENT_TIMESTAMP()) / 3600.0 END AS age_hours,\n",
+        "       CASE WHEN h.current_run_finished_at IS NULL THEN 'NO_REPORTING_RUN'\n",
+        "            WHEN h.current_run_status = 'FAILED' THEN 'FAILED_COLLECTION'\n",
+        "            WHEN o.oldest_observation_at IS NULL THEN 'NO_MEASUREMENTS'\n",
+        "            WHEN o.oldest_observation_at < TIMESTAMPADD(HOUR, -26, CURRENT_TIMESTAMP()) THEN 'STALE'\n",
+        "            ELSE 'FRESH' END AS freshness_state,\n",
+        "       o.oldest_observation_at,\n",
+        "       h.inventory_completed AS latest_inventory_completed,\n",
+        "       h.account_id, h.metastore_id,\n",
+        "       h.error_type, h.error_message\n",
+        "FROM (SELECT 'REPLACE_WITH_UNIQUE_SCOPE_ID' AS scope_id) requested\n",
+        "LEFT JOIN storage_collection_scope_health h\n",
+        "  ON requested.scope_id = h.scope_id AND h.collection_mode = 'full_storage'\n",
+        "LEFT JOIN observed o ON h.current_run_id = o.run_id"
+      ]
+    },
+    {
+      "name": "storage_details",
+      "displayName": "Latest table observations",
+      "queryLines": [
+        "SELECT CONCAT(table_catalog, '.', table_schema, '.', table_name) AS table_name,\n",
+        "       table_id, table_type, total_bytes,\n",
+        "       total_bytes / 1073741824.0 AS total_gib,\n",
+        "       CASE WHEN total_bytes IS NULL THEN 'Unavailable'\n",
+        "            WHEN total_bytes >= 1152921504606846976 THEN CONCAT(FORMAT_NUMBER(total_bytes / 1152921504606846976.0, 2), ' EiB')\n",
+        "            WHEN total_bytes >= 1125899906842624 THEN CONCAT(FORMAT_NUMBER(total_bytes / 1125899906842624.0, 2), ' PiB')\n",
+        "            WHEN total_bytes >= 1099511627776 THEN CONCAT(FORMAT_NUMBER(total_bytes / 1099511627776.0, 2), ' TiB')\n",
+        "            WHEN total_bytes >= 1073741824 THEN CONCAT(FORMAT_NUMBER(total_bytes / 1073741824.0, 2), ' GiB')\n",
+        "            WHEN total_bytes >= 1048576 THEN CONCAT(FORMAT_NUMBER(total_bytes / 1048576.0, 2), ' MiB')\n",
+        "            WHEN total_bytes >= 1024 THEN CONCAT(FORMAT_NUMBER(total_bytes / 1024.0, 2), ' KiB')\n",
+        "            ELSE CONCAT(CAST(total_bytes AS STRING), ' B') END AS total_storage,\n",
+        "       active_bytes, time_travel_bytes, vacuumable_bytes,\n",
+        "       total_bytes - active_bytes - time_travel_bytes - vacuumable_bytes AS log_bytes,\n",
+        "       num_total_files, observed_at, collection_status,\n",
+        "       run_status, run_id, error_type, error_message\n",
+        "FROM table_storage_current\n",
+        "WHERE scope_id = 'REPLACE_WITH_UNIQUE_SCOPE_ID' AND collection_mode = 'full_storage'\n",
+        "ORDER BY total_bytes DESC NULLS LAST, table_name"
+      ]
+    },
+    {
+      "name": "storage_top_tables",
+      "displayName": "Ten largest measured tables",
+      "queryLines": [
+        "SELECT CONCAT(table_catalog, '.', table_schema, '.', table_name) AS table_name,\n",
+        "       total_bytes / 1073741824.0 AS total_gib,\n",
+        "       active_bytes / 1073741824.0 AS active_gib,\n",
+        "       observed_at\n",
+        "FROM table_storage_current\n",
+        "WHERE scope_id = 'REPLACE_WITH_UNIQUE_SCOPE_ID' AND collection_mode = 'full_storage'\n",
+        "  AND collection_status = 'SUCCESS' AND total_bytes IS NOT NULL\n",
+        "ORDER BY total_bytes DESC, table_name\n",
+        "LIMIT 10"
+      ]
+    },
+    {
+      "name": "storage_history",
+      "displayName": "Storage per complete collection run",
+      "queryLines": [
+        "WITH completed_runs AS (\n",
+        "  SELECT * FROM storage_collection_runs_latest\n",
+        "  WHERE scope_id = 'REPLACE_WITH_UNIQUE_SCOPE_ID' AND collection_mode = 'full_storage'\n",
+        "    AND run_status = 'COMPLETE' AND inventory_count > 0\n",
+        "    AND error_count = 0 AND success_count = inventory_count\n",
+        "), measured_runs AS (\n",
+        "  SELECT r.run_id, r.run_finished_at, r.inventory_count,\n",
+        "         COUNT(*) AS recorded_count,\n",
+        "         COUNT_IF(s.collection_status = 'SUCCESS' AND s.total_bytes IS NOT NULL) AS measured_count,\n",
+        "         SUM(CASE WHEN s.collection_status = 'SUCCESS' THEN s.total_bytes END) AS total_bytes,\n",
+        "         SUM(CASE WHEN s.collection_status = 'SUCCESS' THEN s.active_bytes END) AS active_bytes\n",
+        "  FROM completed_runs r\n",
+        "  JOIN table_storage_snapshots s\n",
+        "    ON r.scope_id = s.scope_id AND r.collection_mode = s.collection_mode AND r.run_id = s.run_id\n",
+        "  GROUP BY r.run_id, r.run_finished_at, r.inventory_count\n",
+        ")\n",
+        "SELECT run_id, run_finished_at,\n",
+        "       total_bytes / 1073741824.0 AS total_gib,\n",
+        "       active_bytes / 1073741824.0 AS active_gib,\n",
+        "       inventory_count\n",
+        "FROM measured_runs\n",
+        "WHERE recorded_count = inventory_count AND measured_count = inventory_count\n",
+        "ORDER BY run_finished_at"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "table-storage",
+      "displayName": "Table storage",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "title",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# Table storage"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "scope",
+            "multilineTextboxSpec": {
+              "lines": [
+                "Scope: **REPLACE_WITH_UNIQUE_SCOPE_ID** \u00b7 Full storage, including retained files and transaction logs. Review coverage and freshness below."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 1,
+            "width": 12,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "total-storage",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "storage_summary",
+                  "fields": [
+                    {
+                      "name": "complete_total_bytes",
+                      "expression": "`complete_total_bytes`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "title": "Total storage (bytes)",
+                "showTitle": true,
+                "description": "Available only for a nonempty, complete collection run. Readable units appear in the table below.",
+                "showDescription": true
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "complete_total_bytes",
+                  "displayName": "Total storage (bytes)",
+                  "format": {
+                    "type": "number",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "measured-tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "storage_summary",
+                  "fields": [
+                    {
+                      "name": "measured_count",
+                      "expression": "`measured_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "title": "Tables measured",
+                "showTitle": true,
+                "description": "Successful measurements in the current reporting run.",
+                "showDescription": true
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "measured_count",
+                  "displayName": "Tables measured",
+                  "format": {
+                    "type": "number",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "failed-tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "storage_summary",
+                  "fields": [
+                    {
+                      "name": "error_count",
+                      "expression": "`error_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "title": "Table errors",
+                "showTitle": true,
+                "description": "Review collection health for inventory or job failures.",
+                "showDescription": true
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "error_count",
+                  "displayName": "Table errors",
+                  "format": {
+                    "type": "number",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "health",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "storage_health",
+                  "fields": [
+                    {
+                      "name": "collection_state",
+                      "expression": "`collection_state`"
+                    },
+                    {
+                      "name": "freshness_state",
+                      "expression": "`freshness_state`"
+                    },
+                    {
+                      "name": "inventory_count",
+                      "expression": "`inventory_count`"
+                    },
+                    {
+                      "name": "success_count",
+                      "expression": "`success_count`"
+                    },
+                    {
+                      "name": "error_count",
+                      "expression": "`error_count`"
+                    },
+                    {
+                      "name": "measured_fraction",
+                      "expression": "`measured_fraction`"
+                    },
+                    {
+                      "name": "age_hours",
+                      "expression": "`age_hours`"
+                    },
+                    {
+                      "name": "current_run_finished_at",
+                      "expression": "`current_run_finished_at`"
+                    },
+                    {
+                      "name": "latest_attempt_status",
+                      "expression": "`latest_attempt_status`"
+                    },
+                    {
+                      "name": "error_message",
+                      "expression": "`error_message`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "frame": {
+                "title": "Collection health",
+                "showTitle": true
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "collection_state",
+                    "displayName": "Collection"
+                  },
+                  {
+                    "fieldName": "freshness_state",
+                    "displayName": "Freshness"
+                  },
+                  {
+                    "fieldName": "inventory_count",
+                    "displayName": "Discovered"
+                  },
+                  {
+                    "fieldName": "success_count",
+                    "displayName": "Measured"
+                  },
+                  {
+                    "fieldName": "error_count",
+                    "displayName": "Errors"
+                  },
+                  {
+                    "fieldName": "measured_fraction",
+                    "displayName": "Coverage",
+                    "format": {
+                      "type": "number-percent",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 1
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "age_hours",
+                    "displayName": "Age (hours)",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 4
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "current_run_finished_at",
+                    "displayName": "Reporting run completed"
+                  },
+                  {
+                    "fieldName": "latest_attempt_status",
+                    "displayName": "Latest attempt"
+                  },
+                  {
+                    "fieldName": "error_message",
+                    "displayName": "Error"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "largest-tables",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "storage_top_tables",
+                  "fields": [
+                    {
+                      "name": "table_name",
+                      "expression": "`table_name`"
+                    },
+                    {
+                      "name": "total_gib",
+                      "expression": "`total_gib`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "title": "Largest measured tables",
+                "showTitle": true,
+                "description": "Current run; incomplete coverage is shown above.",
+                "showDescription": true
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "total_gib",
+                  "displayName": "Total storage (GiB)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "table_name",
+                  "displayName": "Table",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 9,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "storage-history",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "storage_history",
+                  "fields": [
+                    {
+                      "name": "run_finished_at",
+                      "expression": "`run_finished_at`"
+                    },
+                    {
+                      "name": "total_gib",
+                      "expression": "`total_gib`"
+                    },
+                    {
+                      "name": "active_gib",
+                      "expression": "`active_gib`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "frame": {
+                "title": "Storage by complete run",
+                "showTitle": true,
+                "description": "Each point is one complete collection. Snapshots are not added across time.",
+                "showDescription": true
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "run_finished_at",
+                  "displayName": "Collection finished",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "fields": [
+                    {
+                      "fieldName": "total_gib",
+                      "displayName": "Total GiB"
+                    },
+                    {
+                      "fieldName": "active_gib",
+                      "displayName": "Active GiB"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 9,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "table-storage",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "storage_details",
+                  "fields": [
+                    {
+                      "name": "table_name",
+                      "expression": "`table_name`"
+                    },
+                    {
+                      "name": "total_storage",
+                      "expression": "`total_storage`"
+                    },
+                    {
+                      "name": "total_bytes",
+                      "expression": "`total_bytes`"
+                    },
+                    {
+                      "name": "active_bytes",
+                      "expression": "`active_bytes`"
+                    },
+                    {
+                      "name": "time_travel_bytes",
+                      "expression": "`time_travel_bytes`"
+                    },
+                    {
+                      "name": "vacuumable_bytes",
+                      "expression": "`vacuumable_bytes`"
+                    },
+                    {
+                      "name": "log_bytes",
+                      "expression": "`log_bytes`"
+                    },
+                    {
+                      "name": "num_total_files",
+                      "expression": "`num_total_files`"
+                    },
+                    {
+                      "name": "observed_at",
+                      "expression": "`observed_at`"
+                    },
+                    {
+                      "name": "collection_status",
+                      "expression": "`collection_status`"
+                    },
+                    {
+                      "name": "error_message",
+                      "expression": "`error_message`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "frame": {
+                "title": "Storage by table",
+                "showTitle": true
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "table_name",
+                    "displayName": "Table"
+                  },
+                  {
+                    "fieldName": "total_storage",
+                    "displayName": "Total storage"
+                  },
+                  {
+                    "fieldName": "total_bytes",
+                    "displayName": "Total bytes"
+                  },
+                  {
+                    "fieldName": "active_bytes",
+                    "displayName": "Active bytes"
+                  },
+                  {
+                    "fieldName": "time_travel_bytes",
+                    "displayName": "Time travel bytes"
+                  },
+                  {
+                    "fieldName": "vacuumable_bytes",
+                    "displayName": "Vacuumable bytes"
+                  },
+                  {
+                    "fieldName": "log_bytes",
+                    "displayName": "Log bytes"
+                  },
+                  {
+                    "fieldName": "num_total_files",
+                    "displayName": "Total files"
+                  },
+                  {
+                    "fieldName": "observed_at",
+                    "displayName": "Observed at"
+                  },
+                  {
+                    "fieldName": "collection_status",
+                    "displayName": "Status"
+                  },
+                  {
+                    "fieldName": "error_message",
+                    "displayName": "Error"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 15,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "refresh-note",
+            "multilineTextboxSpec": {
+              "lines": [
+                "Dashboard refresh reads saved observations. The collection job measures storage. Unknown totals remain unavailable; the default stale threshold is 26 hours."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 23,
+            "width": 12,
+            "height": 2
+          }
+        }
+      ]
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "canvasBackgroundColor": {
+        "light": "#F5F7FA",
+        "dark": "#19242D"
+      },
+      "widgetBackgroundColor": {
+        "light": "#FFFFFF",
+        "dark": "#111B23"
+      },
+      "widgetBorderColor": {
+        "light": "#E3E8EE",
+        "dark": "#253541"
+      },
+      "fontColor": {
+        "light": "#172B3A",
+        "dark": "#E5EEF5"
+      },
+      "selectionColor": {
+        "light": "#136FA6",
+        "dark": "#8BC9EC"
+      },
+      "visualizationColors": [
+        "#136FA6",
+        "#E67722",
+        "#368B73",
+        "#8C6BB1",
+        "#C6454D",
+        "#7A8D9B"
+      ],
+      "widgetHeaderAlignment": "LEFT"
+    }
+  }
+}
