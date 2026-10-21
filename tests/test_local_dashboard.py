@@ -1,8 +1,12 @@
 """Offline checks for the customer dashboard artifact; no workspace access."""
 
 import json
+import sys
 import unittest
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from build_dashboard import build
 
@@ -30,7 +34,7 @@ class DashboardDeliveryTests(unittest.TestCase):
             self.assertIn("CAST(X'" + scope.encode("utf-8").hex() + "' AS STRING)", sql)
 
     def test_checked_in_template_matches_generator(self):
-        path = Path(__file__).with_name("table_storage.lvdash.json")
+        path = ROOT / "dashboards" / "table_storage.lvdash.json"
         self.assertEqual(json.loads(path.read_text()), build("REPLACE_WITH_UNIQUE_SCOPE_ID"))
 
 

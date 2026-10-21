@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def definitions():
-    source = Path(__file__).with_name("collector.py")
+    source = Path(__file__).resolve().parents[1] / "notebooks" / "collector.py"
     nodes = []
     for node in ast.parse(source.read_text()).body:
         if isinstance(node, ast.For):

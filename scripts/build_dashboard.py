@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 
-PACKAGE = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 DATASET_FIELDS = {
     "storage_summary": ["complete_total_bytes", "measured_count", "error_count"],
     "storage_health": [
@@ -31,7 +31,7 @@ def load_datasets(scope_id):
     # Use a binary literal for unusual identifiers so SQL parsing cannot reinterpret their contents.
     scope_literal = ("'" + scope_id + "'" if re.fullmatch(r"[A-Za-z0-9_.:/@=-]+", scope_id)
                      else "CAST(X'" + scope_id.encode("utf-8").hex() + "' AS STRING)")
-    source = (PACKAGE / "dashboard_queries.sql").read_text()
+    source = (ROOT / "sql" / "dashboard_queries.sql").read_text()
     markers = list(re.finditer(r"(?m)^-- dataset: ([a-z_]+) \| (.+)$", source))
     datasets = []
     for index, marker in enumerate(markers):
@@ -154,7 +154,7 @@ def build(scope_id):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scope-id", required=True, help="The collector's exact scope_id.")
-    parser.add_argument("--output", type=Path, default=PACKAGE / "table_storage.local.lvdash.json")
+    parser.add_argument("--output", type=Path, default=ROOT / "dashboards" / "table_storage.local.lvdash.json")
     args = parser.parse_args()
     if not args.scope_id.strip() or any(ord(char) < 32 for char in args.scope_id):
         parser.error("scope-id must be nonempty and cannot contain control characters")

@@ -8,7 +8,7 @@ Implementation guide · 20 October 2026
 
 **Validated on the F5 demo workspace using isolated synthetic tables.**
 
-Implementation: [repository and quick start](README.md). All collector, SQL, job template, dashboard, and validation resources are included in this repository.
+Implementation: [repository and quick start](../README.md). Run local deployment commands from the cloned repository root. All collector, SQL, job template, dashboard, and validation resources are included in this repository.
 
 ## Recommended approach
 
@@ -88,7 +88,7 @@ If the storage command is unavailable, verify the runtime and table support befo
 
 ## 4. Import and configure the collector
 
-Import `collector.py` from this repository as a Python notebook. Create the approved output schema first. The notebook creates the required tables and reporting views; `setup.sql` contains the same definitions for review or a separate bootstrap process.
+Import `notebooks/collector.py` from this repository as a Python notebook. Create the approved output schema first. The notebook creates the required tables and reporting views; `sql/setup.sql` contains the same definitions for review or a separate bootstrap process.
 
 Bootstrap uses `CREATE … IF NOT EXISTS`. Recurring collections do not replace the reporting views. Apply future view-definition upgrades with reviewed `ALTER VIEW … AS` statements so existing grants and view identity are preserved. [CREATE VIEW behavior](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-ddl-create-view)
 
@@ -97,7 +97,7 @@ In the Workspace browser, create a dedicated folder, select **Import**, and choo
 ```bash
 databricks workspace mkdirs /Workspace/Shared/table-storage-monitoring --profile F5_PROFILE
 databricks workspace import /Workspace/Shared/table-storage-monitoring/collector \
-  --file collector.py --format SOURCE --language PYTHON --profile F5_PROFILE
+  --file notebooks/collector.py --format SOURCE --language PYTHON --profile F5_PROFILE
 ```
 
 Set the notebook widgets/job parameters:
@@ -155,7 +155,7 @@ The saved `table_id` is the Delta table ID returned by `DESCRIBE DETAIL`, rather
 
 ## 6. Create the AI/BI dashboard
 
-Create a dashboard backed by the output catalog/schema. Use only read-only `SELECT` datasets. The package includes `dashboard_queries.sql` and a dashboard builder/template for the following views:
+Create a dashboard backed by the output catalog/schema. Use only read-only `SELECT` datasets. The package includes `sql/dashboard_queries.sql` and a dashboard builder/template for the following views:
 
 - Table detail: table name, readable total storage, raw total bytes, active bytes, retained bytes, observation time, and collection status. Numeric GiB is retained in the dataset.
 - Largest tables: the ten largest successfully measured tables in the current scope.
@@ -187,14 +187,14 @@ Use the complete package queries for aggregate figures and health. When importin
 The package provides two deployment options. To import through the UI, first generate the file for the exact collector scope, then import that file from the Dashboards page and select the reporting catalog/schema and SQL warehouse:
 
 ```bash
-python3 build_dashboard.py --scope-id YOUR_UNIQUE_SCOPE_ID \
-  --output table_storage.local.lvdash.json
+python3 scripts/build_dashboard.py --scope-id YOUR_UNIQUE_SCOPE_ID \
+  --output dashboards/table_storage.local.lvdash.json
 ```
 
 For repeatable CLI deployment, use Python 3.9 or later and the current Databricks CLI. This command executes all five datasets on the specified warehouse before creating a draft; it stops if any query fails:
 
 ```bash
-python3 deploy_dashboard.py \
+python3 scripts/deploy_dashboard.py \
   --profile F5_PROFILE --warehouse-id YOUR_SQL_WAREHOUSE_ID \
   --catalog operations --schema table_storage_monitoring \
   --scope-id YOUR_UNIQUE_SCOPE_ID --create
@@ -208,10 +208,16 @@ Dashboard refresh reads the most recently saved observations. Schedule it after 
 
 Create a Lakeflow Job for the collector notebook using the reviewed runtime and production service principal. Set maximum concurrent runs to `1`. Start with a daily off-peak schedule and notifications on failures; tune the cadence after measuring the pilot’s duration. Keep schedules paused during setup and enable them only after the acceptance checks pass.
 
-Alternatively, copy `job.template.json` to the ignored `job.local.json`, edit every `REPLACE_WITH_…` value, confirm the imported notebook path, and create the job with:
+Alternatively, create a local job configuration from the template:
 
 ```bash
-databricks jobs create --json @job.local.json --profile F5_PROFILE
+cp deployment/job.template.json deployment/job.local.json
+```
+
+In the ignored `deployment/job.local.json`, edit every `REPLACE_WITH_…` value and confirm the imported notebook path. Then create the job:
+
+```bash
+databricks jobs create --json @deployment/job.local.json --profile F5_PROFILE
 ```
 
 The template selects serverless compute with environment client `4`, matching the live test configuration, and keeps its daily schedule paused. Its `STANDARD` performance target suits a daily batch without a tight startup deadline. A serverless environment client is not a pinned Databricks Runtime version; confirm command support in F5’s workspace. Review the environment in the Jobs UI, and configure the production run-as principal and failure notifications before enabling the schedule.
@@ -290,9 +296,9 @@ The draft AI/BI dashboard was created and read back through the API; its saved d
 
 The test did not validate inventory-backed collection, large-estate performance/listing cost, minimum privileges for a reader identity, positive vacuumable-byte scenarios, scheduled execution, or additional table formats. No recurring schedule was enabled. Test fixtures and the draft dashboard were retained for review.
 
-To repeat the synthetic validation in F5’s environment, import `test_harness.py` as a separate notebook. Set `catalog` to an existing writable UC catalog and `collector_notebook_path` to the imported collector’s absolute workspace path. Leave `test_suffix` blank to generate a unique test schema. Optionally provide `external_base_url` under an existing permitted external location to include the external-table check. Run it on compatible notebook compute and inspect the returned JSON’s `overall_result` and individual checks. The harness creates new fixtures and retains them for review; it does not use the production source scope.
+To repeat the synthetic validation in F5’s environment, import `tests/notebooks/test_harness.py` as a separate notebook. Set `catalog` to an existing writable UC catalog and `collector_notebook_path` to the imported collector’s absolute workspace path. Leave `test_suffix` blank to generate a unique test schema. Optionally provide `external_base_url` under an existing permitted external location to include the external-table check. Run it on compatible notebook compute and inspect the returned JSON’s `overall_result` and individual checks. The harness creates new fixtures and retains them for review; it does not use the production source scope.
 
-`external_reconciliation.py` is a separate bounded diagnostic for that new external fixture. It requires the exact expected fixture location and refuses managed tables. It is not part of the production collector.
+`tests/notebooks/external_reconciliation.py` is a separate bounded diagnostic for that new external fixture. It requires the exact expected fixture location and refuses managed tables. It is not part of the production collector.
 
 ## Accounting limits
 

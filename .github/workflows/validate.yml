@@ -17,9 +17,9 @@ jobs:
         with:
           python-version: '3.11'
           cache: pip
-          cache-dependency-path: requirements-dev.txt
-      - run: python -m pip install -r requirements-dev.txt
+          cache-dependency-path: tests/requirements-dev.txt
+      - run: python -m pip install -r tests/requirements-dev.txt
       - name: Check notebook syntax
-        run: python -m compileall -q collector.py test_harness.py external_reconciliation.py
+        run: python -m compileall -q notebooks/collector.py tests/notebooks/test_harness.py tests/notebooks/external_reconciliation.py
       - name: Run offline contract tests
-        run: python -m unittest discover -p 'test_local_*.py' -v
+        run: python -m unittest discover -s tests -p 'test_local_*.py' -v
