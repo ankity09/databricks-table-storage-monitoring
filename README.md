@@ -134,7 +134,7 @@ The default freshness threshold is 26 hours, defined in `dashboard_queries.sql`.
 
 ## Validation
 
-The isolated demo test passed **20/20 live collector checks** on observed serverless Runtime 19.11 Photon / Spark 4.2.0. An external fixture independently reconciled to 60,565 bytes and 10 files. All five dashboard datasets were exercised across complete and negative scopes. See the guide for exact coverage and untested cases.
+The isolated demo test passed **20/20 live collector checks** on observed serverless Runtime 19.11 Photon / Spark 4.2.0. An external fixture independently reconciled to 60,565 bytes and 10 files. All five dashboard datasets were exercised across complete and negative scopes. A separate run of the supplied paused job template bootstrapped a new monitoring schema and completed a one-table collection with zero errors; the temporary job was then deleted. See the guide for exact coverage and untested cases.
 
 Offline tests run with Python and PySpark; they do not start Spark or contact a workspace:
 
